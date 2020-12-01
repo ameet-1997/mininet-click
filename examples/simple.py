@@ -24,6 +24,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("switch", default="click")
     parser.add_argument("--n", type=int, default=3)
+    parser.add_argument("--switch_type", default="router")
     return parser.parse_args()
 
 
@@ -43,7 +44,7 @@ def simpleNoClick(n=3):
     return net
 
 
-def simpleClick(n=3):
+def simpleClick(switch_type, n=3):
     net = Mininet(switch=ClickUserSwitch)
 
     info("*** Adding controller\n")
@@ -51,7 +52,7 @@ def simpleClick(n=3):
 
     info("*** Adding hosts\n")
     hosts = [net.addHost("h" + str(i)) for i in xrange(n)]
-    s0 = net.addSwitch("s0")
+    s0 = net.addSwitch("s0", switch_type=switch_type)
 
     info("*** Adding links\n")
     # Connect every host to the switch.
@@ -59,13 +60,15 @@ def simpleClick(n=3):
 
     return net
 
-def get_net(switch, n):
-    return simpleNoClick(n) if switch == "no_click" else simpleClick(n)
+def get_net(args):
+    if args.switch == "no_click":
+        return simpleNoClick(args.n)
+    return simpleClick(switch_type=args.switch_type, n=args.n)
 
 if __name__ == "__main__":
     setLogLevel("info")
     args = parse_args()
-    net = get_net(args.switch, args.n)
+    net = get_net(args)
 
     info("*** Starting network\n")
     net.start()

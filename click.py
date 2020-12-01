@@ -17,29 +17,74 @@ class ClickSwitch(Switch):
     def uninstall_cmd(self):
         raise NotImplementedError
 
-    def __init__(self, name, log_file=None, **params):
+    def __init__(self, name, switch_type, log_file=None, **params):
         Switch.__init__( self, name, **params )
         self.log_file = log_file if log_file else "{}.log".format(self.name)
+        if switch_type == "simple_switch":
+            self.make_config = self.simple_switch
+        elif switch_type == "router":
+            self.make_config = self.router
+        else:
+            raise NotImplementedError(switch_type)
 
-    def make_config(self, ip_to_intf):
-        intfs = sorted(list(ip_to_intf.values()))
-        from_device = Template(
-            "FromDevice('$src') -> Queue(8) -> ToDevice('$dst')"
-        )
+    def router(self, links):
+        # Sort by the name of the host interface (e.g. h0-eth0).
+        links = sorted(links, key=lambda l: l.intf1.name)
+        for link in links:
+            link.intf2.ifconfig("mtu", "50000")
+
+        # Routing table--map ip address to an index.
+        rt = "rt :: StaticIPLookup(\n  "
+        rt += ",\n  ".join(["{}/32 {}".format(l.intf1.IP(), i)
+                           for i, l in enumerate(links)])
+        rt += ");"
+
+        from_device_t = Template("\n  ".join([
+            "FromDevice('$src') ",
+            "-> Print(got) ",
+            "-> Strip(14) ",
+            #"-> Print(stripped) ",
+            "-> CheckIPHeader ",
+            "-> Print(checked) ",
+            #"-> StripIPHeader ",
+            "-> GetIPAddress(16) ",
+            "-> Print(hhhh, 100) ",
+            "-> [0]rt;",
+        ]))
+        from_device = "\n".join(
+            [from_device_t.substitute(src=l.intf2.name) for l in links])
+
+        to_device_t = Template("\n  ".join([
+            "rt[$i] ",
+            "-> Print(hhh) ",
+            "-> Queue(8) ",
+            "-> ToDevice('$dst');",
+        ]))
+        to_device = "\n".join(
+            [to_device_t.substitute(i=i, dst=l.intf2.name)
+             for i, l in enumerate(links)])
+        return "\n".join([rt, from_device, to_device])
+
+    def simple_switch(self, links):
+        ip_to_intf = [(l.intf1.IP(), l.intf1.name) for l in links]
+        ip_to_intf.sort(key=lambda t: t[1])
+        ips, intfs = zip(*ip_to_intf)
+        from_device = Template("\n".join([
+            "FromDevice('$src') ",
+            "-> Queue(8) ",
+            "-> ToDevice('$dst');",
+        ]))
         return "\n".join(
             [from_device.substitute(src=intfs[i], dst=intfs[(i+1) % len(intfs)])
              for i in xrange(len(intfs))])
+
+    def links(self):
+        return [intf.link for intf in self.intfs.values() if intf.name != "lo"]
     
     def start(self, controllers):
         print("click startup")
-        ip_to_intf = {}
-        # Each interface has already been configured by net.addLink.
-        for intf in self.intfs.values():
-            if intf.name == "lo":
-                continue
-            ip_to_intf[intf.link.intf1.IP()] = intf.name
-            intf.link.intf2.ifconfig("mtu", "50000")
-        config = self.make_config(ip_to_intf)
+        links = self.links()
+        config = self.make_config(links)
         config_fn = "{}.click".format(self.name)
         print("writing config to {}".format(config_fn))
         with open(config_fn, "w") as f:
