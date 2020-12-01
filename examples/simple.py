@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("switch", default="click")
     parser.add_argument("--n", type=int, default=3)
     parser.add_argument("--switch_type", default="router")
+    parser.add_argument("--log_level", default="info")
     return parser.parse_args()
 
 
@@ -68,8 +69,8 @@ def get_net(args):
     return simpleClick(switch_type=args.switch_type, n=args.n)
 
 if __name__ == "__main__":
-    setLogLevel("debug")
     args = parse_args()
+    setLogLevel(args.log_level)
     net = get_net(args)
 
     info("*** Starting network\n")
