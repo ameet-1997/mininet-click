@@ -6,6 +6,7 @@ import itertools
 from string import Template
 
 from mininet.node import Switch
+from mininet.util import ipParse, ipStr
 
 class ClickSwitch(Switch):
     """Use ClickUserSwitch or ClickKernelSwitch"""
@@ -30,8 +31,10 @@ class ClickSwitch(Switch):
     def router(self, links):
         # Sort by the name of the host interface (e.g. h0-eth0).
         links = sorted(links, key=lambda l: l.intf1.name)
+        cur_ip = max([ipParse(l.intf1.IP()) for l in links]) + 1
         for link in links:
-            link.intf2.ifconfig("mtu", "50000")
+            link.intf2.ifconfig(ipStr(cur_ip) + "/8")
+            cur_ip += 1
 
         # Routing table--map ip address to an index.
         rt = "rt :: StaticIPLookup(\n  "
