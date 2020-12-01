@@ -2,6 +2,8 @@
 Provides a Click based switch class.
 Forked from https://github.com/frawi/click-mininet
 """
+import itertools
+from string import Template
 
 from mininet.node import Switch
 
@@ -20,25 +22,14 @@ class ClickSwitch(Switch):
         self.log_file = log_file if log_file else "{}.log".format(self.name)
 
     def make_config(self, ip_to_intf):
-        intfs = sorted(list(ip_to_intf.items()), key=lambda i: i[1])
-        ip_classifier = (
-            "ip :: IPClassifier(" +
-            ", ".join(["ip dst {}".format(ip) for ip, _ in intfs]) +
-            ", -)"
+        intfs = sorted(list(ip_to_intf.values()))
+        from_device = Template(
+            "FromDevice('$src') -> Queue(8) -> ToDevice('$dst')"
         )
         return "\n".join(
-            ["FromDevice('{}', SNIFFER false) -> Queue(8) -> ToDevice('{}');".format(
-                intfs[i][1], intfs[(i + 1) % len(intfs)][1])
+            [from_device.substitute(src=intfs[i], dst=intfs[(i+1) % len(intfs)])
              for i in xrange(len(intfs))])
     
-        # from_device = "\n".join(
-        #     ["FromDevice('{}') -> [0]ip;".format(intf) for _, intf in intfs])
-        # to_device = "\n".join(
-        #     ["ip[{}] -> Queue(8) -> ToDevice('{}');".format(i, intf)
-        #      for i, (_, intf) in enumerate(intfs)])
-        # discard = "ip[{}] -> Discard;".format(len(intfs))
-        # return "\n".join([ip_classifier, from_device, to_device, discard]) + "\n"
-
     def start(self, controllers):
         print("click startup")
         ip_to_intf = {}

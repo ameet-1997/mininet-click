@@ -2,10 +2,9 @@
 """
 Create a topology with some nodes and a switch.
 
-$ sudo python examples/simple.py
-or
-$ sudo python examples/simple.py no_click
+$ sudo python examples/simple.py (click|no_click) --n 3
 """
+import argparse
 import sys
 import os
 import os.path
@@ -19,6 +18,13 @@ from mininet.link import TCLink
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from click import ClickUserSwitch, ClickKernelSwitch
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("switch", default="click")
+    parser.add_argument("--n", type=int, default=3)
+    return parser.parse_args()
 
 
 def simpleNoClick(n=3):
@@ -53,11 +59,13 @@ def simpleClick(n=3):
 
     return net
 
+def get_net(switch, n):
+    return simpleNoClick(n) if switch == "no_click" else simpleClick(n)
 
 if __name__ == "__main__":
     setLogLevel("info")
-    net = (simpleNoClick() if len(sys.argv) > 1 and sys.argv[1] == "no_click"
-           else simpleClick())
+    args = parse_args()
+    net = get_net(args.switch, args.n)
 
     info("*** Starting network\n")
     net.start()
