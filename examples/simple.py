@@ -66,7 +66,7 @@ def get_net(args):
     return simpleClick(switch_type=args.switch_type, n=args.n)
 
 if __name__ == "__main__":
-    setLogLevel("info")
+    setLogLevel("debug")
     args = parse_args()
     net = get_net(args)
 
