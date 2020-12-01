@@ -114,8 +114,8 @@ class ClickSwitch(Switch):
             out.append("\n".join([
                 "rt[{}]".format(i),
                 "-> Print(out{})".format(i),
-                "-> EtherEncap(0x08000, {}, {})".format(l.intf2.MAC(),
-                                                        l.intf1.MAC()),
+                "-> EtherEncap(0x0800, {}, {})".format(l.intf2.MAC(),
+                                                       l.intf1.MAC()),
                 "-> Print(ether)",
                 "-> out{};\n".format(i)]))
 
