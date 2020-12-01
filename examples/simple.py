@@ -32,7 +32,7 @@ def simpleNoClick(n=3):
     net = Mininet()
 
     info("*** Adding controller\n")
-    net.addController( "c0" )
+    net.addController("c0")
 
     info("*** Adding hosts\n")
     hosts = [net.addHost("h" + str(i)) for i in xrange(n)]
@@ -45,7 +45,7 @@ def simpleNoClick(n=3):
 
 
 def simpleClick(switch_type, n=3):
-    net = Mininet(switch=ClickUserSwitch)
+    net = Mininet(switch=ClickUserSwitch, link=TCLink)
 
     info("*** Adding controller\n")
     net.addController("c0")
@@ -57,6 +57,8 @@ def simpleClick(switch_type, n=3):
     info("*** Adding links\n")
     # Connect every host to the switch.
     links = [net.addLink(h, s0) for h in hosts]
+    for link in links:
+        link.intf2.ifconfig("mtu", "50000")
 
     return net
 
