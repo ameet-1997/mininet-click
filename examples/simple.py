@@ -63,10 +63,40 @@ def simpleClick(switch_type, n=3):
 
     return net
 
+
+def chainTopology(switch_type, n=3, r=3):
+    net = Mininet(switch=ClickUserSwitch, link=TCLink)
+
+    info("*** Adding controller\n")
+    net.addController("c0")
+
+    info("*** Adding hosts, switches, and links\n")
+    switches = []
+    for i in xrange(r):
+        s = net.addSwitch("s" + str(i), switch_type=switch_type)
+        hosts = [net.addHost("h" + str(i + j)) for j in xrange(n)]
+        for h in hosts:
+            net.addLink(h, s)
+        switches.append(s)
+
+    info("*** Connecting switches\n")
+    # Simple chain topology: s0 <-> s1 <-> ... <-> sr
+    for i in xrange(1, len(switches)):
+        net.addLink(switches[i], switches[i - 1])
+    for s in switches:
+        s.init_neighbors()
+    while True:
+        if not any(s.update() for s in switches):
+            break
+
+    return net
+
+
 def get_net(args):
     if args.switch == "no_click":
         return simpleNoClick(args.n)
     return simpleClick(switch_type=args.switch_type, n=args.n)
+
 
 if __name__ == "__main__":
     args = parse_args()

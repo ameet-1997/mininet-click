@@ -8,8 +8,10 @@ from string import Template
 from mininet.node import Switch
 from mininet.util import ipParse, ipStr
 
+
 class ClickSwitch(Switch):
     """Use ClickUserSwitch or ClickKernelSwitch"""
+
     @property
     def install_cmd(self):
         raise NotImplementedError
@@ -19,7 +21,7 @@ class ClickSwitch(Switch):
         raise NotImplementedError
 
     def __init__(self, name, switch_type, log_file=None, **params):
-        Switch.__init__( self, name, **params )
+        Switch.__init__(self, name, **params)
         self.log_file = log_file if log_file else "{}.log".format(self.name)
         if switch_type == "simple_switch":
             self.make_config = self.simple_switch
@@ -36,38 +38,57 @@ class ClickSwitch(Switch):
 
         # Add some comments
         for i, l in enumerate(links):
-            out.append("// {} {} {} {} <-> {} {}".format(
-                i, l.intf1.name, l.intf1.IP(), l.intf1.MAC(),
-                l.intf2.MAC(), l.intf2.name))
+            out.append(
+                "// {} {} {} {} <-> {} {}".format(
+                    i,
+                    l.intf1.name,
+                    l.intf1.IP(),
+                    l.intf1.MAC(),
+                    l.intf2.MAC(),
+                    l.intf2.name,
+                )
+            )
         out[-1] += "\n"
 
         # Three buckets: ARP request, ARP response, IP packets, anything else.
-        out.append("c0 :: Classifier(12/0806 20/0001, 12/0806 20/0002, "
-                   "12/0800, -);\n")
+        out.append(
+            "c0 :: Classifier(12/0806 20/0001, 12/0806 20/0002, "
+            "12/0800, -);\n"
+        )
 
         # FromDevice: 'Paint' packets from each interface so we can identify
         # the source later if needed, then send it to the classifier.
         for i, l in enumerate(links):
-            out.append("\n".join([
-                "FromDevice('{}')".format(l.intf2.name),
-                "-> Print(got{})".format(i),
-                "-> Paint({})".format(i),
-                "-> [0]c0;\n"]))
+            out.append(
+                "\n".join(
+                    [
+                        "FromDevice('{}')".format(l.intf2.name),
+                        "-> Print(got{})".format(i),
+                        "-> Paint({})".format(i),
+                        "-> [0]c0;\n",
+                    ]
+                )
+            )
 
         # ToDevice variables.
         for i, l in enumerate(links):
-            out.append("\n".join([
-                "out{} :: Queue(8)".format(i),
-                "-> Print(out{})".format(i),
-                "-> ToDevice('{}');\n".format(l.intf2.name)
-            ]))
+            out.append(
+                "\n".join(
+                    [
+                        "out{} :: Queue(8)".format(i),
+                        "-> Print(out{})".format(i),
+                        "-> ToDevice('{}');\n".format(l.intf2.name),
+                    ]
+                )
+            )
 
         # Proxy ARP for every request. I.e. if the topography is:
         #   h1 -- s0-eth1 : s0 : s0-eth2 -- h2
         # and h1 sends an ARP request for h2, respond with "s0-eth1".
         arp_responder_s = "ARPResponder(\n  "
         arp_responder_s += ",\n  ".join(
-            ["{} $mac".format(l.intf1.IP()) for l in links])
+            ["{} $mac".format(l.intf1.IP()) for l in links]
+        )
         arp_responder_s += ")"
         arp_responder_t = Template(arp_responder_s)
 
@@ -76,13 +97,20 @@ class ClickSwitch(Switch):
         out.append("c0[0] -> arpt :: Tee({});\n".format(len(links)))
         for i, l in enumerate(links):
 
-            out.append("\n".join([
-                "arpt[{}]".format(i),
-                "-> CheckPaint({})".format(i),
-                "-> Print(arp_req_from{})".format(i),
-                "-> {}".format(arp_responder_t.substitute(mac=l.intf2.MAC())),
-                "-> Print(arp_response)",
-                "-> out{};\n".format(i)]))
+            out.append(
+                "\n".join(
+                    [
+                        "arpt[{}]".format(i),
+                        "-> CheckPaint({})".format(i),
+                        "-> Print(arp_req_from{})".format(i),
+                        "-> {}".format(
+                            arp_responder_t.substitute(mac=l.intf2.MAC())
+                        ),
+                        "-> Print(arp_response)",
+                        "-> out{};\n".format(i),
+                    ]
+                )
+            )
 
         # ARP responses--just toss because we know where everything is.
         out.append("c0[1] -> Discard;\n")
@@ -90,54 +118,94 @@ class ClickSwitch(Switch):
         # non-IP packets are dropped.
         out.append("c0[3] -> Discard;\n")
 
-
         # IP request. Static routing table maps IP address to the index of the
         # interface.
         rt = "rt :: StaticIPLookup(\n  "
-        rt += ",\n  ".join(["{}/32 {}".format(l.intf1.IP(), i)
-                           for i, l in enumerate(links)])
+        rt += ",\n  ".join(
+            ["{}/32 {}".format(l.intf1.IP(), i) for i, l in enumerate(links)]
+        )
         rt += ");\n"
         out.append(rt)
 
-        out.append("\n".join([
-            "c0[2]",
-            "-> Print(ip_req)",
-            "-> Strip(14)",  # Strip ethernet header
-            "-> Print(stripped)",
-            "-> CheckIPHeader",
-            "-> GetIPAddress(16)",
-            "-> Print(ip)",
-            "-> [0]rt;\n"]))
+        out.append(
+            "\n".join(
+                [
+                    "c0[2]",
+                    "-> Print(ip_req)",
+                    "-> Strip(14)",  # Strip ethernet header
+                    "-> Print(stripped)",
+                    "-> CheckIPHeader",
+                    "-> GetIPAddress(16)",
+                    "-> Print(ip)",
+                    "-> [0]rt;\n",
+                ]
+            )
+        )
 
         # Route requests to the correct interface.
         for i, l in enumerate(links):
-            out.append("\n".join([
-                "rt[{}]".format(i),
-                "-> Print(out{})".format(i),
-                "-> EtherEncap(0x0800, {}, {})".format(l.intf2.MAC(),
-                                                       l.intf1.MAC()),
-                "-> Print(ether)",
-                "-> out{};\n".format(i)]))
+            out.append(
+                "\n".join(
+                    [
+                        "rt[{}]".format(i),
+                        "-> Print(out{})".format(i),
+                        "-> EtherEncap(0x0800, {}, {})".format(
+                            l.intf2.MAC(), l.intf1.MAC()
+                        ),
+                        "-> Print(ether)",
+                        "-> out{};\n".format(i),
+                    ]
+                )
+            )
 
         return "\n".join(out) + "\n"
-
 
     def simple_switch(self, links):
         ip_to_intf = [(l.intf1.IP(), l.intf1.name) for l in links]
         ip_to_intf.sort(key=lambda t: t[1])
         ips, intfs = zip(*ip_to_intf)
-        from_device = Template("\n".join([
-            "FromDevice('$src') ",
-            "-> Queue(8) ",
-            "-> ToDevice('$dst');",
-        ]))
+        from_device = Template(
+            "\n".join(
+                [
+                    "FromDevice('$src') ",
+                    "-> Queue(8) ",
+                    "-> ToDevice('$dst');",
+                ]
+            )
+        )
         return "\n".join(
-            [from_device.substitute(src=intfs[i], dst=intfs[(i+1) % len(intfs)])
-             for i in xrange(len(intfs))])
+            [
+                from_device.substitute(
+                    src=intfs[i], dst=intfs[(i + 1) % len(intfs)]
+                )
+                for i in xrange(len(intfs))
+            ]
+        )
 
     def links(self):
         return [intf.link for intf in self.intfs.values() if intf.name != "lo"]
-    
+
+    def init_neighbors(self):
+        self.node_to_intf = {}
+        self.intf_to_neighbor = {}
+        for l in self.links():
+            neighbor_intf = l.intf1 if l.intf1.node != self else l.intf2
+            self_intf = l.intf1 if l.intf1.node == self else l.intf2
+            self.intf_to_neighbor[self_intf.name] = neighbor_intf.node
+            self.node_to_intf[neighbor_intf.node.name] = self_intf.name
+
+    def update(self):
+        neighbors = list(self.intf_to_neighbor.items())
+        updated = False
+        for intf, n in neighbors:
+            if not hasattr(n, "node_to_intf"):
+                continue
+            for nn in n.node_to_intf:
+                if nn not in self.node_to_intf and nn != self.name:
+                    updated = True
+                    self.node_to_intf[nn] = intf
+        return updated
+
     def start(self, controllers):
         print("click startup")
         links = self.links()
@@ -155,7 +223,7 @@ class ClickSwitch(Switch):
     def stop(self):
         print("click shutdown")
         self.cmd(self.uninstall_cmd)
-        #self.cmd(OurClickKernelSwitch.uninstall_cmd)
+        # self.cmd(OurClickKernelSwitch.uninstall_cmd)
 
 
 class ClickUserSwitch(ClickSwitch):
