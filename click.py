@@ -31,7 +31,7 @@ class ClickSwitch(Switch):
     def router(self, links):
         # Sort by the name of the host interface (e.g. h0-eth0).
         links = sorted(links, key=lambda l: l.intf1.name)
-
+        print(str([l.intf1.name for l in links]))
         out = []
 
         # Add some comments
