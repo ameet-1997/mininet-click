@@ -22,9 +22,11 @@ from click import ClickUserSwitch, ClickKernelSwitch
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("switch", default="click")
+    parser.add_argument("--switch", default="click")
     parser.add_argument("--n", type=int, default=3)
     parser.add_argument("--switch_type", default="router")
+    parser.add_argument("--topo", default="star")
+    parser.add_argument("--r", type=int, default=3)
     parser.add_argument("--log_level", default="info")
     return parser.parse_args()
 
@@ -71,12 +73,14 @@ def chainTopology(switch_type, n=3, r=3):
     net.addController("c0")
 
     info("*** Adding hosts, switches, and links\n")
+    hosts = []
     switches = []
     for i in xrange(r):
         s = net.addSwitch("s" + str(i), switch_type=switch_type)
-        hosts = [net.addHost("h" + str(i + j)) for j in xrange(n)]
-        for h in hosts:
+        hs = [net.addHost("h" + str(len(hosts) + j)) for j in xrange(n)]
+        for h in hs:
             net.addLink(h, s)
+        hosts += hs
         switches.append(s)
 
     info("*** Connecting switches\n")
@@ -95,7 +99,11 @@ def chainTopology(switch_type, n=3, r=3):
 def get_net(args):
     if args.switch == "no_click":
         return simpleNoClick(args.n)
-    return simpleClick(switch_type=args.switch_type, n=args.n)
+    if args.topo == "star":
+        return simpleClick(switch_type=args.switch_type, n=args.n)
+    if args.topo == "chain":
+        return chainTopology(switch_type=args.switch_type, n=args.n, r=args.r)
+    raise NotImplementedError(args.switch + "." + args.topo)
 
 
 if __name__ == "__main__":
