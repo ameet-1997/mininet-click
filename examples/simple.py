@@ -21,6 +21,7 @@ from click import ClickUserSwitch, ClickKernelSwitch
 import numpy as np
 import random
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--switch", default="click")
@@ -31,6 +32,7 @@ def parse_args():
     parser.add_argument("--log_level", default="info")
     return parser.parse_args()
 
+
 def adjacency_matrix_to_adjacency_list(adjacency_matrix):
     assert adjacency_matrix.shape[0] == adjacency_matrix.shape[1]
     assert np.array_equal(adjacency_matrix, adjacency_matrix.T)
@@ -39,131 +41,82 @@ def adjacency_matrix_to_adjacency_list(adjacency_matrix):
         adjacency_list[j] = set(np.nonzero(adjacency_matrix[j, :])[0].tolist())
     return adjacency_list
 
-"""
-Return dictionary of nodes with distances from input node
-"""
 
-def BFS(adjacency_list, node_id):
-    visited = []
-    queue = []
-    visited_nodes = set()
-
-    queue.append(node_id)
-    cur_distance = 0
-    visited = {}
-    visited[node_id] = cur_distance
-
-    while len(queue):
-        s = queue.pop(0)
-        cur_distance += 1
-        for neighbor in adjacency_list[s]:
-            if neighbor not in visited:
-                visited[neighbor] = cur_distance
-                queue.append(neighbor)
-    return visited
-
-"""
-Generates IP maps for each of the nodes
-{router id: { outgoing router id : set of router ids}
-Generate the mapping by iteratively going through all the routers
-"""
-
-def shortest_path_IP_map(adjacency_matrix):
-
+def initialize_topology(
+    adjacency_matrix, n=1, switch_type="router", click_switch=True
+):
+    """
+    Initialize topology of routers defined by an adjancency matrix
+    Add a node to each router; We need to figure out why we need
+    """
     assert adjacency_matrix.shape[0] == adjacency_matrix.shape[1]
     assert np.array_equal(adjacency_matrix, adjacency_matrix.T)
-    num_nodes = adjacency_matrix.shape[0]
-    # generate forwarding tables
-    adjacency_list = adjacency_matrix_to_adjacency_list(adjacency_matrix)
-    shortest_path_IP_map = {}
-    bfs_out = []
-    for j in xrange(num_nodes):
-        bfs_out.append(BFS(adjacency_list, j))
-    for j in xrange(num_nodes):
-        shortest_path_IP_map[j] = {} 
-        # need to figure out which edges lead to the shortest path; compare bfs outputs
-        cur_neighbors = list(adjacency_list[j])
-        # remove self loops
-        cur_neighbors.remove(j)
-        distance_matrix = np.zeros((len(cur_neighbors), num_nodes))
-        for i, cur_neighbor in enumerate(cur_neighbors):
-            for node in bfs_out[cur_neighbor]:
-                distance_matrix[i, node] = bfs_out[cur_neighbor][node]
-            shortest_path_IP_map[j][cur_neighbor] = []
-
-        shortest_path_indices = np.argmin(distance_matrix, axis=0)
-
-        # get the argmin among all of them
-        for n in xrange(num_nodes):
-            if n != j:
-                shortest_path_IP_map[j][cur_neighbors[shortest_path_indices[n]]].append(n)
-    return shortest_path_IP_map
-
-"""
-Initialize topology of routers defined by an adjancency matrix
-Add a node to each router; We need to figure out why we need 
-"""
-def initialize_topology(adjacency_matrix, switch_type='router', click_switch=True):
-    assert adjacency_matrix.shape[0] == adjacency_matrix.shape[1]
-    assert adjacency_matrix == adjacency_matrix.T
 
     num_routers = adjacency_matrix.shape[0]
 
-    net = Mininet(switch=ClickUserSwitch, link=TCLink) if click_switch else Mininet()
+    net = Mininet(
+        switch=ClickUserSwitch if click_switch else Switch, link=TCLink
+    )
 
     info("*** Adding controller\n")
     net.addController("c0")
 
-    info("*** Adding hosts\n")
-    # 1 host per router
-    hosts = [net.addHost("h" + str(i)) for i in xrange(num_routers)]
-
-    # adding n swithches
+    info("*** Adding hosts and switches\n")
     switches = []
+    hosts = []
     for j in xrange(num_routers):
         if click_switch:
-            switches.append(net.addSwitch("s" + str(j), switch_type=switch_type))
+            switches.append(
+                net.addSwitch("s" + str(j), switch_type=switch_type)
+            )
         else:
             switches.append(net.addSwitch("s" + str(j)))
+        for i in xrange(n):
+            hosts.append(net.addHost("h" + str(len(hosts))))
+            net.addLink(hosts[-1], switches[-1])
 
-    info("*** Adding links\n")
-    # Connect a host to a switch.
-    # Add router links
-    
-    host_router_links = [net.addLink(hosts[j], switches[j]) for j in xrange(num_routers)]
+    info("*** Adding router links\n")
     router_router_links = []
-    for i in xrange(num_routers):
-        for k in xrange(num_routers):
-            if i != k and adjacency_matrix[i][k]:
-                router_router_links.append(net.addLink(switches[i], switches[j]))
-    # connect a host to a switch
-       
-    for link in (host_router_links + router_router_links):
-        link.intf2.ifconfig("mtu", "50000")
+    added = set([])
+    for row in xrange(len(adjacency_matrix)):
+        for col in xrange(len(adjacency_matrix[row])):
+            if row == col or adjacency_matrix[row][col] == 0:
+                continue
+            i, j = sorted([row, col])
+            print((row, col), (i, j))
+            if (i, j) not in added:
+                added.add((i, j))
+                net.addLink(switches[i], switches[j])
+
+    for s in switches:
+        s.init_neighbors()
+    while any(s.update() for s in switches):
+        continue
 
     return net
 
-"""
-Initialize a random topology with n routers and one node per router; Ensures that the topology is connected
-by adding random edges to a randomly sampled tree
 
-Returns: Adjancency matrix of size N x N
-"""
 def create_random_topology(num_routers, sparsity=0.15):
+    """Initialize a random topology with n routers and one node per
+    router; Ensures that the topology is connected by adding random
+    edges to a randomly sampled tree
 
+    Returns: Adjancency matrix of size N x N
+    """
     frontier = []
     frontier.append(0)
     exterior = list(xrange(1, num_routers))
     adjacency_matrix = np.zeros((num_routers, num_routers))
     while len(exterior):
-        # randomly select a router in the frontier and the exterior; create an edge b/w them
-        # then update the frontier and exterior
+        # randomly select a router in the frontier and the exterior;
+        # create an edge b/w them then update the frontier and
+        # exterior
         sampled_exterior_router_id = random.randrange(len(exterior))
         sampled_exterior_router = exterior[sampled_exterior_router_id]
 
         sampled_frontier_router_id = random.randrange(len(frontier))
         sampled_frontier_router = frontier[sampled_frontier_router_id]
-        
+
         # add edges; 2 edges for symmetry
         adjacency_matrix[sampled_exterior_router, sampled_frontier_router] = 1
         adjacency_matrix[sampled_frontier_router, sampled_exterior_router] = 1
@@ -187,11 +140,24 @@ def create_random_topology(num_routers, sparsity=0.15):
     print("number of sparse edges", np.sum(random_adjacency_matrix) // 2)
     return (adjacency_matrix + random_adjacency_matrix) >= 1
 
-def create_star_topology(num_routers):
-    pass
+
+def create_star_topology():
+    return [[1]]
+
 
 def create_ring_topology(num_routers):
     pass
+
+
+def create_bottleneck_topology(depth):
+    """
+    h0            h5
+    h1 s0  s2  s3 h6
+    h2 s1      s4 h7
+    h3            h8
+    """
+    pass
+
 
 def simpleNoClick(n=3):
     net = Mininet()
@@ -265,26 +231,22 @@ def get_net(args):
         return simpleClick(switch_type=args.switch_type, n=args.n)
     if args.topo == "chain":
         return chainTopology(switch_type=args.switch_type, n=args.n, r=args.r)
+    if args.top == "random":
+        topo = create_random_topology(args.r)
+        return initialize_topology(topo)
     raise NotImplementedError(args.switch + "." + args.topo)
 
 
 if __name__ == "__main__":
-    topo = create_random_topology(10)
-    print(topo)
-    adjacency_list = adjacency_matrix_to_adjacency_list(topo)
-    print(adjacency_list)
-    print(BFS(adjacency_list, 0))
+    args = parse_args()
+    setLogLevel(args.log_level)
+    net = get_net(args)
 
-    print(shortest_path_IP_map(topo))
-    # args = parse_args()
-    # setLogLevel(args.log_level)
-    # net = get_net(args)
+    info("*** Starting network\n")
+    net.start()
 
-    # info("*** Starting network\n")
-    # net.start()
+    info("*** Running CLI\n")
+    CLI(net)
 
-    # info("*** Running CLI\n")
-    # CLI(net)
-
-    # info("*** Stopping network")
-    # net.stop()
+    info("*** Stopping network")
+    net.stop()
