@@ -9,7 +9,7 @@ from string import Template
 from mininet.node import Switch
 from mininet.util import ipParse, ipStr
 
-Entry = collections.namedtuple("Entry", ["node", "node_intf", "self_intf"])
+Entry = collections.namedtuple("Entry", ["node", "intf_to_node"])
 
 
 class ClickSwitch(Switch):
@@ -23,7 +23,7 @@ class ClickSwitch(Switch):
     def uninstall_cmd(self):
         raise NotImplementedError
 
-    def __init__(self, name, switch_type, log_file=None, **params):
+    def __init__(self, name, switch_type="router", log_file=None, **params):
         Switch.__init__(self, name, **params)
         self.log_file = log_file if log_file else "{}.log".format(self.name)
         if switch_type == "simple_switch":
@@ -33,11 +33,44 @@ class ClickSwitch(Switch):
         else:
             raise NotImplementedError(switch_type)
 
-    def router(self, links):
+    def links(self):
+        return [intf.link for intf in self.intfs.values() if intf.name != "lo"]
+
+    def intf_from_name(self, name):
+        return [intf for intf in self.intfs.values() if intf.name == name][0]
+
+    def init_neighbors(self):
+        self.node_table = {}
+        self.intf_to_neighbor = {}
+        for l in self.links():
+            neighbor_intf = l.intf1 if l.intf1.node != self else l.intf2
+            self_intf = l.intf1 if l.intf1.node == self else l.intf2
+            self.intf_to_neighbor[self_intf.name] = neighbor_intf.node
+            self.node_table[neighbor_intf.node.name] = Entry(
+                node=neighbor_intf.node,
+                intf_to_node=self_intf,
+            )
+
+    def update(self):
+        neighbors = list(self.intf_to_neighbor.items())
+        updated = False
+        for intf, n in neighbors:
+            if not hasattr(n, "node_table"):
+                continue
+            for name, entry in n.node_table.items():
+                if name not in self.node_table and name != self.name:
+                    updated = True
+                    self.node_table[name] = Entry(
+                        node=entry.node,
+                        intf_to_node=self.intf_from_name(intf),
+                    )
+        return updated
+
+    def router(self):
         # Sort by the name of the host (e.g. h0).
         nodes = sorted(self.node_table.values(), key=lambda n: n.node.name)
         intfs = sorted(
-            list(set([n.self_intf for n in nodes])), key=lambda i: i.name
+            list(set([n.intf_to_node for n in nodes])), key=lambda i: i.name
         )
         intf_to_idx = {intf.name: idx for idx, intf in enumerate(intfs)}
 
@@ -46,14 +79,12 @@ class ClickSwitch(Switch):
         # Add some comments
         for n in nodes:
             out.append(
-                "// {} {} {} {} <-> {} {} {}".format(
-                    intf_to_idx[n.self_intf.name],
+                "// {} {} {} <-> {} {}".format(
+                    intf_to_idx[n.intf_to_node.name],
                     n.node.name,
-                    n.node_intf.name,
-                    n.node_intf.IP(),
-                    n.self_intf.name,
-                    n.node_intf.MAC(),
-                    n.self_intf.MAC(),
+                    n.node.IP(),
+                    n.intf_to_node.name,
+                    n.intf_to_node.MAC(),
                 )
             )
         out[-1] += "\n"
@@ -96,9 +127,9 @@ class ClickSwitch(Switch):
         arp_responder_s = "ARPResponder(\n  "
         arp_responder_s += ",\n  ".join(
             [
-                "{} $mac".format(n.node_intf.IP())
+                "{} $mac".format(n.node.IP())
                 for n in nodes
-                if n.node_intf.IP()  # switches don't have IP addresses
+                if n.node.IP()  # switches don't have IP addresses
             ]
         )
         arp_responder_s += ")"
@@ -134,11 +165,9 @@ class ClickSwitch(Switch):
         rt = "rt :: StaticIPLookup(\n  "
         rt += ",\n  ".join(
             [
-                "{}/32 {}".format(
-                    n.node_intf.IP(), intf_to_idx[n.self_intf.name]
-                )
+                "{}/32 {}".format(n.node.IP(), intf_to_idx[n.intf_to_node.name])
                 for n in nodes
-                if n.node_intf.IP()
+                if n.node.IP()
             ]
         )
         rt += ");\n"
@@ -181,7 +210,8 @@ class ClickSwitch(Switch):
 
         return "\n".join(out) + "\n"
 
-    def simple_switch(self, links):
+    def simple_switch(self):
+        links = self.links()
         ip_to_intf = [(l.intf1.IP(), l.intf1.name) for l in links]
         ip_to_intf.sort(key=lambda t: t[1])
         ips, intfs = zip(*ip_to_intf)
@@ -203,50 +233,13 @@ class ClickSwitch(Switch):
             ]
         )
 
-    def links(self):
-        return [intf.link for intf in self.intfs.values() if intf.name != "lo"]
-
-    def init_neighbors(self):
-        self.node_table = {}
-        self.intf_to_neighbor = {}
-        for l in self.links():
-            neighbor_intf = l.intf1 if l.intf1.node != self else l.intf2
-            self_intf = l.intf1 if l.intf1.node == self else l.intf2
-            self.intf_to_neighbor[self_intf.name] = neighbor_intf.node
-            self.node_table[neighbor_intf.node.name] = Entry(
-                node=neighbor_intf.node,
-                node_intf=neighbor_intf,
-                self_intf=self_intf,
-            )
-
-    def intf_from_name(self, name):
-        return [intf for intf in self.intfs.values() if intf.name == name][0]
-
-    def update(self):
-        neighbors = list(self.intf_to_neighbor.items())
-        updated = False
-        for intf, n in neighbors:
-            if not hasattr(n, "node_table"):
-                continue
-            for name, entry in n.node_table.items():
-                if name not in self.node_table and name != self.name:
-                    updated = True
-                    self.node_table[name] = Entry(
-                        node=entry.node,
-                        node_intf=entry.node_intf,
-                        self_intf=self.intf_from_name(intf),
-                    )
-        return updated
-
     def start(self, controllers):
         print("click startup")
-        links = self.links()
-        config = self.make_config(links)
+        config = self.make_config()
         config_fn = "{}.click".format(self.name)
         print("writing config to {}".format(config_fn))
         with open(config_fn, "w") as f:
             f.write(config)
-        # print("config:\n" + 78*"-" + "\n" + config)
         cmd = [self.install_cmd, config_fn]
         if self.log_file:
             cmd.append('> "%s" 2>&1' % self.log_file)
