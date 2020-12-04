@@ -232,32 +232,54 @@ def run_experiment(args, net):
             rate=args.rate,
             h=s.name,
         )
-        print(scmd)
-        print(rcmd)
         s.sendCmd(scmd)
         r.sendCmd(rcmd)
     print("sleeping for %d seconds" % (args.ttl + 1))
     time.sleep(args.ttl + 1)
     for h in hosts:
         h.waiting = False
-    print("\t".join(["s", "r", "sent", "received", "rate", "latency"]))
+    print(
+        "\t".join(
+            [
+                "s",
+                "r",
+                "sent",
+                "send_rate",
+                "received",
+                "fwd_rate",
+                "fwd_ratio",
+                "latency",
+            ]
+        )
+    )
     for s, r in zip(senders, receivers):
         with open(
             "/home/mininet/mininet-click/log/%s-s.log" % s.name, "r"
         ) as f:
             sent = int(f.read().strip())
-            rate = sent / args.ttl
+            send_rate = sent / args.ttl
         with open(
             "/home/mininet/mininet-click/log/%s-r.log" % r.name, "r"
         ) as f:
             results = f.read().strip().split(", ")
             received = int(results[0])
+            fwd_rate = received / args.ttl
+            fwd_ratio = float(received) / sent
             latency = float(results[1])
         print(
             "\t".join(
                 [
                     str(v)
-                    for v in [s.name, r.name, sent, received, rate, latency]
+                    for v in [
+                        s.name,
+                        r.name,
+                        sent,
+                        send_rate,
+                        received,
+                        fwd_rate,
+                        fwd_ratio,
+                        latency,
+                    ]
                 ]
             )
         )
