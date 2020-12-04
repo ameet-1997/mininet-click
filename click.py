@@ -25,7 +25,7 @@ class ClickSwitch(Switch):
 
     def __init__(self, name, switch_type="router", log_file=None, **params):
         Switch.__init__(self, name, **params)
-        self.log_file = log_file if log_file else "{}.log".format(self.name)
+        self.log_file = log_file if log_file else "log/{}.log".format(self.name)
         if switch_type == "simple_switch":
             self.make_config = self.simple_switch
         elif switch_type == "router":
@@ -236,7 +236,7 @@ class ClickSwitch(Switch):
     def start(self, controllers):
         print("click startup")
         config = self.make_config()
-        config_fn = "{}.click".format(self.name)
+        config_fn = "config/{}.click".format(self.name)
         print("writing config to {}".format(config_fn))
         with open(config_fn, "w") as f:
             f.write(config)
@@ -248,7 +248,6 @@ class ClickSwitch(Switch):
     def stop(self):
         print("click shutdown")
         self.cmd(self.uninstall_cmd)
-        # self.cmd(OurClickKernelSwitch.uninstall_cmd)
 
 
 class ClickUserSwitch(ClickSwitch):

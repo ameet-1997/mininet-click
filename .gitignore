@@ -1,5 +1,5 @@
 *~
 *.pyc
 *.log
-examples/s0.click
-s*\.click
+log/*
+config/*
