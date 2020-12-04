@@ -3,10 +3,12 @@
 Create a topology with some nodes and a switch.
 """
 import argparse
-import sys
 import os
 import os.path
 from pprint import pprint
+from string import Template
+import sys
+import time
 
 os.chdir(os.path.abspath(os.path.dirname(sys.argv[0])))
 
@@ -23,11 +25,23 @@ import random
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cleanup", action="store_true")
+
+    # Define a topology
     parser.add_argument("--no_click", action="store_true")
     parser.add_argument("--topology", default="chain")
     parser.add_argument("--num_routers", type=int, default=3)
     parser.add_argument("--nodes_per_router", type=int, default=3)
     parser.add_argument("--sparsity", type=float, default=0.15)
+
+    # Run an experiment
+    parser.add_argument("--run_experiment", action="store_true")
+    parser.add_argument("--ttl", help="ttl in seconds", type=int, default=30)
+    parser.add_argument("--rate", help="kpackets/sec", type=int, default=-1)
+    parser.add_argument("--size", help="bytes per packet", type=int, default=64)
+
+    # Run the net in the CLI.
+    parser.add_argument("--cli", action="store_true")
+
     parser.add_argument("--log_level", default="info")
     return parser.parse_args()
 
@@ -187,6 +201,68 @@ def cleanup():
             os.system(cmd)
 
 
+def run_experiment(args, net):
+    # Partition hosts into senders and receivers.
+    hosts = net.hosts
+    assert len(hosts) % 2 == 0
+    senders, receivers = hosts[: len(hosts) / 2], hosts[len(hosts) / 2 :]
+    rcmd_t = Template(
+        "python -u traffic/receive.py --ip $ip --ttl $ttl --size $size "
+        "--log '/home/mininet/mininet-click/log/$h-r.log'"
+    )
+    scmd_t = Template(
+        "python -u traffic/send.py --ip $ip --ttl $ttl --size $size "
+        "--rate $rate --log '/home/mininet/mininet-click/log/$h-s.log'"
+    )
+    print("ttl: %d, rate: %d, size: %d" % (args.ttl, args.rate, args.size))
+    print("starting %d flows" % len(senders))
+    for s, r in zip(senders, receivers):
+        print("sender: %s, receiver: %s (%s)" % (s.name, r.name, r.IP()))
+        rcmd = rcmd_t.substitute(
+            ip=r.IP(),
+            ttl=args.ttl,
+            size=args.size,
+            rate=args.rate,
+            h=r.name,
+        )
+        scmd = scmd_t.substitute(
+            ip=r.IP(),
+            ttl=args.ttl,
+            size=args.size,
+            rate=args.rate,
+            h=s.name,
+        )
+        print(scmd)
+        print(rcmd)
+        s.sendCmd(scmd)
+        r.sendCmd(rcmd)
+    print("sleeping for %d seconds" % (args.ttl + 1))
+    time.sleep(args.ttl + 1)
+    for h in hosts:
+        h.waiting = False
+    print("\t".join(["s", "r", "sent", "received", "rate", "latency"]))
+    for s, r in zip(senders, receivers):
+        with open(
+            "/home/mininet/mininet-click/log/%s-s.log" % s.name, "r"
+        ) as f:
+            sent = int(f.read().strip())
+            rate = sent / args.ttl
+        with open(
+            "/home/mininet/mininet-click/log/%s-r.log" % r.name, "r"
+        ) as f:
+            results = f.read().strip().split(", ")
+            received = int(results[0])
+            latency = float(results[1])
+        print(
+            "\t".join(
+                [
+                    str(v)
+                    for v in [s.name, r.name, sent, received, rate, latency]
+                ]
+            )
+        )
+
+
 if __name__ == "__main__":
     args = parse_args()
     if args.cleanup:
@@ -198,8 +274,12 @@ if __name__ == "__main__":
     info("*** Starting network\n")
     net.start()
 
-    info("*** Running CLI\n")
-    CLI(net)
+    if args.run_experiment:
+        run_experiment(args, net)
+
+    if args.cli:
+        info("*** Running CLI\n")
+        CLI(net)
 
     info("*** Stopping network")
     net.stop()
