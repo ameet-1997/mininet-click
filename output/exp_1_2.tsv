@@ -1,0 +1,4 @@
+topology	sparsity	num_routers	nodes_per_router	rate	s	s/s	r	r/s	drop%
+single_switch	None	1	2	300k	54544	5454	46844	4684	14.0
+single_switch	None	1	2	20k	31812	3181	26702	2670	16.0
+single_switch	None	1	2	-1k	1061704	106170	600850	60085	43.0

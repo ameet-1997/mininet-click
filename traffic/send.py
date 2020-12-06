@@ -26,7 +26,7 @@ def send(args):
     msg = struct.pack("c" * 14, *["x" for _ in xrange(14)])
     count = 0
     end_at = time.time() + args.ttl
-    tick = (1.0 / (args.rate * 1000)) if args.rate >= 0 else 0.0
+    tick = (1.0 / (args.rate * 1000)) if args.rate > 0 else 0.0
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     while time.time() < end_at:
         sock.sendto(msg, (args.ip, args.port))

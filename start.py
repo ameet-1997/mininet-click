@@ -260,7 +260,6 @@ def run_experiment(args, net):
     hosts = net.hosts
     assert len(hosts) % 2 == 0
     senders, receivers = hosts[: len(hosts) / 2], hosts[len(hosts) / 2 :]
-    assert args.rate / len(senders) > 0
     rcmd_t = Template(
         "python -u traffic/receive.py --ip $ip --ttl $ttl --size $size "
         "--log '/home/mininet/mininet-click/log/$h-r.log'"
