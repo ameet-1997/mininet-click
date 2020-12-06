@@ -2,6 +2,7 @@
 import argparse
 import fpformat
 import socket
+import struct
 import sys
 import time
 
@@ -18,24 +19,23 @@ def parse_args():
 
 
 def send(args):
+    # From Kohler et al: "Each 64-byte UDP packet includes Ethernet,
+    # IP, and UDP headers as well as 14 bytes of data and the 4-byte
+    # Ethernet CRC." So create a 14-byte message which should get
+    # padded into a 64 byte packet.
+    msg = struct.pack("c" * 14, *["x" for _ in xrange(14)])
     count = 0
     end_at = time.time() + args.ttl
-    # Timestamps are seconds since epoch to six decimal places, so calculate
-    # how much we need to pad to get 64 byte packets.
-    pad = " " * (args.size - sys.getsizeof(fpformat.fix(time.time(), 6)))
     tick = (1.0 / (args.rate * 1000)) if args.rate >= 0 else 0.0
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    while True:
-        msg = fpformat.fix(time.time(), 6) + pad
+    while time.time() < end_at:
         sock.sendto(msg, (args.ip, args.port))
         count += 1
-        if time.time() > end_at:
-            break
         next_tick = time.time() + tick
         while time.time() < next_tick:
-            continue
+            time.sleep(tick / 2)
+    print("%d" % count)
     with open(args.log, "w") as f:
-        print("%d" % count)
         f.write("%d\n" % count)
 
 

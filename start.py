@@ -3,6 +3,7 @@
 Create a topology with some nodes and a switch.
 """
 import argparse
+import collections
 import os
 import os.path
 from pprint import pprint
@@ -12,11 +13,12 @@ import time
 
 os.chdir(os.path.abspath(os.path.dirname(sys.argv[0])))
 
-from mininet.net import Mininet
 from mininet.node import Controller, OVSSwitch
+from mininet.net import Mininet
+from mininet.log import setLogLevel, info
 from mininet.link import TCLink
 from mininet.cli import CLI
-from mininet.log import setLogLevel, info
+from mininet.util import pmonitor
 from click import ClickUserSwitch, ClickKernelSwitch
 import numpy as np
 import random
@@ -214,8 +216,9 @@ def run_experiment(args, net):
         "python -u traffic/send.py --ip $ip --ttl $ttl --size $size "
         "--rate $rate --log '/home/mininet/mininet-click/log/$h-s.log'"
     )
-    print("ttl: %d, rate: %d, size: %d" % (args.ttl, args.rate, args.size))
+    print("ttl: %d, rate: %dk, size: %d" % (args.ttl, args.rate, args.size))
     print("starting %d flows" % len(senders))
+    popens = {}
     for s, r in zip(senders, receivers):
         print("sender: %s, receiver: %s (%s)" % (s.name, r.name, r.IP()))
         rcmd = rcmd_t.substitute(
@@ -224,65 +227,43 @@ def run_experiment(args, net):
             size=args.size,
             rate=args.rate,
             h=r.name,
-        )
+        ).split(" ")
         scmd = scmd_t.substitute(
             ip=r.IP(),
             ttl=args.ttl,
             size=args.size,
             rate=args.rate,
             h=s.name,
-        )
-        s.sendCmd(scmd)
-        r.sendCmd(rcmd)
-    print("sleeping for %d seconds" % (args.ttl + 1))
-    time.sleep(args.ttl + 1)
-    for h in hosts:
-        h.waiting = False
-    print(
-        "\t".join(
+        ).split(" ")
+        popens[s] = s.popen(scmd)
+        popens[r] = r.popen(rcmd)
+    print("waiting for %d seconds" % args.ttl)
+    results = {}
+    for h, line in pmonitor(popens, timeoutms=500):
+        if line:
+            results[h] = int(line)
+    pprint(results)
+    rows = []
+    for s, r in zip(senders, receivers):
+        assert s in results and r in results
+        sent = results[s]
+        received = results[r]
+        d = collections.OrderedDict(
             [
-                "s",
-                "r",
-                "sent",
-                "send_rate",
-                "received",
-                "fwd_rate",
-                "fwd_ratio",
-                "latency",
+                ("src", s.name),
+                ("dst", r.name),
+                ("s", sent),
+                ("s/s", sent / args.ttl),
+                ("r", received),
+                ("r/s", received / args.ttl),
+                ("drop", "{:.03f}".format(float(received) / sent)),
             ]
         )
-    )
-    for s, r in zip(senders, receivers):
-        with open(
-            "/home/mininet/mininet-click/log/%s-s.log" % s.name, "r"
-        ) as f:
-            sent = int(f.read().strip())
-            send_rate = sent / args.ttl
-        with open(
-            "/home/mininet/mininet-click/log/%s-r.log" % r.name, "r"
-        ) as f:
-            results = f.read().strip().split(", ")
-            received = int(results[0])
-            fwd_rate = received / args.ttl
-            fwd_ratio = float(received) / sent
-            latency = float(results[1])
-        print(
-            "\t".join(
-                [
-                    str(v)
-                    for v in [
-                        s.name,
-                        r.name,
-                        sent,
-                        send_rate,
-                        received,
-                        fwd_rate,
-                        fwd_ratio,
-                        latency,
-                    ]
-                ]
-            )
-        )
+        rows.append(d)
+    keys = list(rows[0].keys())
+    print("\t".join(keys))
+    for row in rows:
+        print("\t".join([str(row[k]) for k in keys]))
 
 
 if __name__ == "__main__":

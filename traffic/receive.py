@@ -22,19 +22,14 @@ def parse_args():
 def receive(args):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.ip, args.port))
-    counts = collections.Counter()
-    latencies = collections.defaultdict(float)
+    count = 0
     end_at = time.time() + args.ttl
     while time.time() < end_at:
-        msg, (src, _) = sock.recvfrom(args.size)
-        sent_at = float(msg)
-        received_at = time.time()
-        counts[src] += 1
-        latencies[src] += received_at - sent_at
+        msg, _ = sock.recvfrom(args.size)
+        count += 1
+    print("%d" % count)
     with open(args.log, "w") as f:
-        for k in counts:
-            f.write("%d, %f\n" % (counts[k], latencies[k] / counts[k]))
-            print("%d, %f" % (counts[k], latencies[k] / counts[k]))
+        f.write("%d\n" % count)
 
 
 if __name__ == "__main__":
