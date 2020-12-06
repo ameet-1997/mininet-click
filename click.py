@@ -241,10 +241,12 @@ class ClickSwitch(Switch):
         )
 
     def start(self, controllers):
-        print("click startup")
+        if debug:
+            print("click startup")
         config = self.make_config()
         config_fn = "config/{}.click".format(self.name)
-        print("writing config to {}".format(config_fn))
+        if debug:
+            print("writing config to {}".format(config_fn))
         with open(config_fn, "w") as f:
             f.write(config)
         cmd = [self.install_cmd, config_fn]

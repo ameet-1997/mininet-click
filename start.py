@@ -36,19 +36,24 @@ def parse_args():
     parser.add_argument("--topology", default="chain")
     parser.add_argument("--num_routers", type=int, default=3)
     parser.add_argument("--nodes_per_router", type=int, default=3)
-    parser.add_argument("--sparsity", type=float, default=0.15)
+    parser.add_argument("--sparsity", type=float, default=None)
 
     # Run an experiment
     parser.add_argument("--run_experiment", action="store_true")
+    parser.add_argument("--output", default="output/results.txt")
     parser.add_argument("--ttl", help="ttl in seconds", type=int, default=3)
-    parser.add_argument("--rate", help="kpackets/sec", type=int, default=-1)
+    parser.add_argument("--rate", help="k/sec", type=int, default=20)
     parser.add_argument("--size", help="bytes per packet", type=int, default=64)
 
     # Run the net in the CLI.
     parser.add_argument("--cli", action="store_true")
 
     parser.add_argument("--log_level", default="info")
-    return parser.parse_args()
+
+    args = parser.parse_args()
+    if args.rate == 0:
+        args.rate = 1
+    return args
 
 
 def adjacency_matrix_to_adjacency_list(adjacency_matrix):
@@ -105,9 +110,18 @@ def create_random_topology(num_routers, sparsity=0.15):
     return (adjacency_matrix + random_adjacency_matrix) >= 1
 
 
-def create_star_topology(num_routers):
-    assert num_routers == 1
+def create_single_switch_topology(num_routers):
     return np.ones((1, 1))
+
+
+def create_star_topology(num_routers):
+    """Every router is connect by a single central router"""
+    adjacency_matrix = np.zeros((num_routers + 1, num_routers + 1))
+    center = num_routers
+    for i in xrange(num_routers):
+        adjacency_matrix[i][center] = 1
+    print(adjacency_matrix)
+    return adjacency_matrix
 
 
 def create_chain_topology(num_routers):
@@ -137,7 +151,11 @@ def initialize_topology(args, adjacency_matrix):
     Add args.nodes_per_router nodes to each router.
     """
     assert adjacency_matrix.shape[0] == adjacency_matrix.shape[1]
-    num_routers = adjacency_matrix.shape[0]
+    if args.topology == "single_switch":
+        num_routers = 1
+        nodes_per_router = args.num_routers * args.nodes_per_router
+    else:
+        num_routers, nodes_per_router = args.num_routers, args.nodes_per_router
 
     if args.no_click:
         switch = OVSSwitch
@@ -154,11 +172,13 @@ def initialize_topology(args, adjacency_matrix):
     info("*** Adding hosts and switches\n")
     switches = []
     hosts = []
-    for j in xrange(num_routers):
+    for j in xrange(adjacency_matrix.shape[0]):
         switches.append(net.addSwitch("s" + str(j)))
-        for i in xrange(args.nodes_per_router):
-            hosts.append(net.addHost("h" + str(len(hosts))))
-            net.addLink(hosts[-1], switches[-1])
+        # Star topology has one router that isn't connected to any hosts.
+        if j < num_routers:
+            for i in xrange(nodes_per_router):
+                hosts.append(net.addHost("h" + str(len(hosts))))
+                net.addLink(hosts[-1], switches[-1])
 
     info("*** Adding router links\n")
     router_router_links = []
@@ -199,7 +219,9 @@ class dotdict(dict):
 def get_net(args):
     if type(args) == dict:
         args = dotdict(args)
-    if args.topology == "star":
+    if args.topology == "single_switch":
+        topo = create_single_switch_topology(1)
+    elif args.topology == "star":
         topo = create_star_topology(args.num_routers)
     elif args.topology == "chain":
         topo = create_chain_topology(args.num_routers)
@@ -221,11 +243,24 @@ def cleanup():
             os.system(cmd)
 
 
+def print_rows(rows):
+    if type(rows) != list:
+        rows = [rows]
+    keys = list(rows[0].keys())
+    out = ["\t".join(keys)]
+    for row in rows:
+        out.append("\t".join([str(row[k]) for k in keys]))
+    s = "\n".join(out)
+    print(s)
+    return s
+
+
 def run_experiment(args, net):
     # Partition hosts into senders and receivers.
     hosts = net.hosts
     assert len(hosts) % 2 == 0
     senders, receivers = hosts[: len(hosts) / 2], hosts[len(hosts) / 2 :]
+    assert args.rate / len(senders) > 0
     rcmd_t = Template(
         "python -u traffic/receive.py --ip $ip --ttl $ttl --size $size "
         "--log '/home/mininet/mininet-click/log/$h-r.log'"
@@ -243,14 +278,14 @@ def run_experiment(args, net):
             ip=r.IP(),
             ttl=args.ttl,
             size=args.size,
-            rate=args.rate,
+            rate=args.rate / len(senders),
             h=r.name,
         ).split(" ")
         scmd = scmd_t.substitute(
             ip=r.IP(),
             ttl=args.ttl,
             size=args.size,
-            rate=args.rate,
+            rate=args.rate / len(senders),
             h=s.name,
         ).split(" ")
         popens[r] = r.popen(rcmd)
@@ -265,7 +300,6 @@ def run_experiment(args, net):
             results[h] = int(line.strip())
         if time.time() > end_at:
             break
-    pprint(results)
     for p in popens.values():
         p.send_signal(SIGINT)
     rows = []
@@ -281,14 +315,44 @@ def run_experiment(args, net):
                 ("s/s", sent / args.ttl),
                 ("r", received),
                 ("r/s", received / args.ttl),
-                ("drop", "{:.03f}".format(1 - (float(received) / sent))),
+                ("drop%", int(100 * (1 - (float(received) / sent)))),
             ]
         )
         rows.append(d)
+    print_rows(rows)
+    summary = collections.OrderedDict()
+    summary["rate"] = str(args.rate) + "k"
     keys = list(rows[0].keys())
-    print("\t".join(keys))
-    for row in rows:
-        print("\t".join([str(row[k]) for k in keys]))
+    for k in keys:
+        if type(rows[0][k]) != str:
+            summary[k] = sum(row[k] for row in rows)
+            if "%" in k:
+                summary[k] /= float(len(rows))
+    print("-" * 80)
+    print_rows([summary])
+    return summary
+
+
+def run(args, net):
+    summary = run_experiment(args, net)
+    if args.topology == "single_switch":
+        args.nodes_per_router = args.nodes_per_router * args.num_routers
+        args.num_routers = 1
+    report = collections.OrderedDict(
+        [
+            ("topology", args.topology),
+            ("sparsity", args.sparsity),
+            ("num_routers", args.num_routers),
+            ("nodes_per_router", args.nodes_per_router),
+        ]
+    )
+    report.update(summary)
+    s = print_rows(report)
+    empty = os.stat(args.output).st_size == 0
+    with open(args.output, "a") as f:
+        if empty:
+            f.write("\t".join(list(report.keys())) + "\n")
+        f.write("\t".join([str(v) for v in report.values()]) + "\n")
 
 
 if __name__ == "__main__":
@@ -296,15 +360,21 @@ if __name__ == "__main__":
     if args.cleanup:
         cleanup()
         exit()
+    print("Params: {}".format(vars(args)))
     setLogLevel(args.log_level)
     click.debug = args.log_level == "debug"
+
     net = get_net(args)
 
     info("*** Starting network\n")
     net.start()
 
     if args.run_experiment:
-        run_experiment(args, net)
+        try:
+            run(args, net)
+        except Exception:
+            net.stop()
+            raise
 
     if args.cli:
         info("*** Running CLI\n")

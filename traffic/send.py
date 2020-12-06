@@ -31,9 +31,10 @@ def send(args):
     while time.time() < end_at:
         sock.sendto(msg, (args.ip, args.port))
         count += 1
-        next_tick = time.time() + tick
-        while time.time() < next_tick:
-            continue
+        time.sleep(tick)
+        # next_tick = time.time() + tick
+        # while time.time() < next_tick:
+        #     continue
     print("%d" % count)
     with open(args.log, "w") as f:
         f.write("%d\n" % count)
