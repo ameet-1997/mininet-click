@@ -12,7 +12,7 @@ def parse_args():
     parser.add_argument("--ip")
     parser.add_argument("--port", type=int, default=5005)
     parser.add_argument("--size", type=int, default=64)
-    parser.add_argument("--ttl", help="ttl in seconds", type=int, default=30)
+    parser.add_argument("--ttl", help="ttl in seconds", type=int, default=5)
     parser.add_argument("--rate", help="kpackets/sec", type=int, default=0)
     parser.add_argument("--log", default="/dev/null")
     return parser.parse_args()
@@ -33,7 +33,7 @@ def send(args):
         count += 1
         next_tick = time.time() + tick
         while time.time() < next_tick:
-            time.sleep(tick / 2)
+            continue
     print("%d" % count)
     with open(args.log, "w") as f:
         f.write("%d\n" % count)

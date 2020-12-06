@@ -7,6 +7,7 @@ import collections
 import os
 import os.path
 from pprint import pprint
+from signal import SIGINT
 from string import Template
 import sys
 import time
@@ -15,10 +16,11 @@ os.chdir(os.path.abspath(os.path.dirname(sys.argv[0])))
 
 from mininet.node import Controller, OVSSwitch
 from mininet.net import Mininet
-from mininet.log import setLogLevel, info
+from mininet.log import setLogLevel, debug, info
 from mininet.link import TCLink
 from mininet.cli import CLI
 from mininet.util import pmonitor
+import click
 from click import ClickUserSwitch, ClickKernelSwitch
 import numpy as np
 import random
@@ -30,6 +32,7 @@ def parse_args():
 
     # Define a topology
     parser.add_argument("--no_click", action="store_true")
+    parser.add_argument("--kernel", action="store_true")
     parser.add_argument("--topology", default="chain")
     parser.add_argument("--num_routers", type=int, default=3)
     parser.add_argument("--nodes_per_router", type=int, default=3)
@@ -37,7 +40,7 @@ def parse_args():
 
     # Run an experiment
     parser.add_argument("--run_experiment", action="store_true")
-    parser.add_argument("--ttl", help="ttl in seconds", type=int, default=30)
+    parser.add_argument("--ttl", help="ttl in seconds", type=int, default=3)
     parser.add_argument("--rate", help="kpackets/sec", type=int, default=-1)
     parser.add_argument("--size", help="bytes per packet", type=int, default=64)
 
@@ -128,17 +131,22 @@ def create_bottleneck_topology(num_routers):
     pass
 
 
-def initialize_topology(adjacency_matrix, nodes_per_router=3, no_click=False):
+def initialize_topology(args, adjacency_matrix):
     """
     Initialize topology of routers defined by an adjancency matrix
-    Add nodes_per_router nodes to each router.
+    Add args.nodes_per_router nodes to each router.
     """
     assert adjacency_matrix.shape[0] == adjacency_matrix.shape[1]
     num_routers = adjacency_matrix.shape[0]
 
-    net = Mininet(
-        switch=OVSSwitch if no_click else ClickUserSwitch, link=TCLink
-    )
+    if args.no_click:
+        switch = OVSSwitch
+    elif args.kernel:
+        switch = ClickKernelSwitch
+    else:
+        switch = ClickUserSwitch
+
+    net = Mininet(switch=switch, link=TCLink)
 
     info("*** Adding controller\n")
     net.addController("c0")
@@ -148,7 +156,7 @@ def initialize_topology(adjacency_matrix, nodes_per_router=3, no_click=False):
     hosts = []
     for j in xrange(num_routers):
         switches.append(net.addSwitch("s" + str(j)))
-        for i in xrange(nodes_per_router):
+        for i in xrange(args.nodes_per_router):
             hosts.append(net.addHost("h" + str(len(hosts))))
             net.addLink(hosts[-1], switches[-1])
 
@@ -165,7 +173,7 @@ def initialize_topology(adjacency_matrix, nodes_per_router=3, no_click=False):
                 added.add((i, j))
                 net.addLink(switches[i], switches[j])
 
-    if no_click:
+    if args.no_click:
         return net
 
     # Initialize the routing table for each switch.
@@ -180,7 +188,17 @@ def initialize_topology(adjacency_matrix, nodes_per_router=3, no_click=False):
     return net
 
 
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+
 def get_net(args):
+    if type(args) == dict:
+        args = dotdict(args)
     if args.topology == "star":
         topo = create_star_topology(args.num_routers)
     elif args.topology == "chain":
@@ -189,7 +207,7 @@ def get_net(args):
         topo = create_random_topology(args.num_routers, args.sparsity)
     else:
         raise NotImplementedError(args.topology)
-    return initialize_topology(topo, args.nodes_per_router, args.no_click)
+    return initialize_topology(args, topo)
 
 
 def cleanup():
@@ -220,7 +238,7 @@ def run_experiment(args, net):
     print("starting %d flows" % len(senders))
     popens = {}
     for s, r in zip(senders, receivers):
-        print("sender: %s, receiver: %s (%s)" % (s.name, r.name, r.IP()))
+        debug("sender: %s, receiver: %s (%s)\n" % (s.name, r.name, r.IP()))
         rcmd = rcmd_t.substitute(
             ip=r.IP(),
             ttl=args.ttl,
@@ -235,14 +253,21 @@ def run_experiment(args, net):
             rate=args.rate,
             h=s.name,
         ).split(" ")
-        popens[s] = s.popen(scmd)
         popens[r] = r.popen(rcmd)
-    print("waiting for %d seconds" % args.ttl)
-    results = {}
+        popens[s] = s.popen(scmd)
+    print("monitoring for %d seconds" % (args.ttl + 3))
+    end_at = time.time() + args.ttl + 3
+    results = {h: 0 for h in hosts}
+    cur = None
     for h, line in pmonitor(popens, timeoutms=500):
-        if line:
-            results[h] = int(line)
+        debug("%s: '%s'\n" % (str(h), line.strip()))
+        if h and line.strip():
+            results[h] = int(line.strip())
+        if time.time() > end_at:
+            break
     pprint(results)
+    for p in popens.values():
+        p.send_signal(SIGINT)
     rows = []
     for s, r in zip(senders, receivers):
         assert s in results and r in results
@@ -256,7 +281,7 @@ def run_experiment(args, net):
                 ("s/s", sent / args.ttl),
                 ("r", received),
                 ("r/s", received / args.ttl),
-                ("drop", "{:.03f}".format(float(received) / sent)),
+                ("drop", "{:.03f}".format(1 - (float(received) / sent))),
             ]
         )
         rows.append(d)
@@ -272,6 +297,7 @@ if __name__ == "__main__":
         cleanup()
         exit()
     setLogLevel(args.log_level)
+    click.debug = args.log_level == "debug"
     net = get_net(args)
 
     info("*** Starting network\n")

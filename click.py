@@ -11,6 +11,8 @@ from mininet.util import ipParse, ipStr
 
 Entry = collections.namedtuple("Entry", ["node", "intf_to_node"])
 
+debug = False
+
 
 class ClickSwitch(Switch):
     """Use ClickUserSwitch or ClickKernelSwitch"""
@@ -208,7 +210,12 @@ class ClickSwitch(Switch):
                 )
             )
 
-        return "\n".join(out) + "\n"
+        config = "\n".join(out)
+        if not debug:
+            config = "\n".join(
+                [l for l in config.split("\n") if "Print" not in l]
+            )
+        return config + "\n"
 
     def simple_switch(self):
         links = self.links()
