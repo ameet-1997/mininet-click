@@ -29,9 +29,9 @@ def send(args):
     tick = (1.0 / (args.rate * 1000)) if args.rate > 0 else 0.0
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     while time.time() < end_at:
+        next_tick = time.time() + tick
         sock.sendto(msg, (args.ip, args.port))
         count += 1
-        next_tick = time.time() + tick
         while time.time() < next_tick:
             continue
     print("%d" % count)

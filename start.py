@@ -53,6 +53,10 @@ def parse_args():
     args = parser.parse_args()
     if args.rate == 0:
         args.rate = 1
+
+    if not os.path.exists(args.output):
+        open(args.output, "a").close()
+
     return args
 
 
