@@ -4,9 +4,11 @@ Create a topology with some nodes and a switch.
 """
 import argparse
 import collections
+import math
 import os
 import os.path
 from pprint import pprint
+import random
 from signal import SIGINT
 from string import Template
 import sys
@@ -40,10 +42,12 @@ def parse_args():
 
     # Run an experiment
     parser.add_argument("--run_experiment", action="store_true")
+    parser.add_argument("--run_ping", action="store_true")
     parser.add_argument("--output", default="output/results.txt")
     parser.add_argument("--ttl", help="ttl in seconds", type=int, default=3)
     parser.add_argument("--rate", help="k/sec", type=int, default=20)
     parser.add_argument("--size", help="bytes per packet", type=int, default=64)
+    parser.add_argument("--udpBw", default="1000M")
 
     # Run the net in the CLI.
     parser.add_argument("--cli", action="store_true")
@@ -264,6 +268,37 @@ def run_experiment(args, net):
     hosts = net.hosts
     assert len(hosts) % 2 == 0
     senders, receivers = hosts[: len(hosts) / 2], hosts[len(hosts) / 2 :]
+    out = []
+    for sender, receiver in zip(senders, receivers):
+        out.append(
+            net.iperf(
+                [sender, receiver],
+                seconds=args.ttl,
+                l4Type="UDP",
+                udpBw=args.udpBw,
+            )
+        )
+    print(out)
+    vals = []
+    for line in out:
+        vals.append(
+            (float(line[1].split(" ")[0]), float(line[2].split(" ")[0]))
+        )
+    summary = collections.OrderedDict()
+    summary["sent"] = sum(sent for sent, _ in vals)
+    summary["received"] = sum(recv for _, recv in vals)
+    summary["fwd_rate"] = float(summary["received"]) / summary["sent"]
+
+    pings = net.pingAllFull()
+    ping_vals = [result[2] for _, _, result in pings]
+    summary["rtt_max"] = max(ping_vals)
+    summary["rtt_min"] = min(ping_vals)
+    summary["rtt_avg"] = np.mean(ping_vals)
+    summary["rtt_std"] = np.std(ping_vals)
+    return summary
+
+
+def _run_experiment(args, net):
     rcmd_t = Template(
         "python -u traffic/receive.py --ip $ip --ttl $ttl --size $size "
         "--log '/home/mininet/mininet-click/log/$h-r.log'"
@@ -336,8 +371,55 @@ def run_experiment(args, net):
     return summary
 
 
+def run_ping(args, net):
+    hosts = net.hosts[::]
+    random.shuffle(hosts)  # Pick random pairs of hosts
+    assert len(hosts) % 2 == 0
+    senders, receivers = hosts[: len(hosts) / 2], hosts[len(hosts) / 2 :]
+    cmd_t = Template("ping -c 1 $h")
+    print("starting %d pings" % len(senders))
+    popens = {}
+    for s, r in zip(senders, receivers):
+        debug("sender: %s, receiver: %s (%s)\n" % (s.name, r.name, r.IP()))
+        cmd = cmd_t.substitute(
+            h=r.name,
+        ).split(" ")
+        popens[s] = s.popen(cmd)
+    print("monitoring for %d seconds" % (args.ttl + 3))
+    end_at = time.time() + args.ttl + 3
+    results = {h: 0 for h in hosts}
+    for h, line in pmonitor(popens, timeoutms=500):
+        debug("%s: '%s'\n" % (str(h), line.strip()))
+        if h and line.strip():
+            results[h] = line.strip()
+        if time.time() > end_at:
+            break
+    for p in popens.values():
+        p.send_signal(SIGINT)
+    vals = []
+    pprint(results)
+    for s, r in zip(senders, receivers):
+        assert s in results
+        vals = results[s].split(" = ").split(" ")[0]
+        rmin, ravg, rmax, rmdev = vals.split("/")
+        vals.append(rmin)  # they're all the same because we only ping once
+    summary = collections.OrderedDict()
+    keys = list(rows[0].keys())
+    summary["min"] = min(vals)
+    summary["avg"] = sum(vals) / float(len(vals))
+    summary["max"] = max(vals)
+    summary["mdev"] = math.sqrt(
+        sum((v - summary["avg"]) ** 2 for v in vals) / len(vals)
+    )
+    print("-" * 80)
+    print_rows([summary])
+    return summary
+
+
 def run(args, net):
-    summary = run_experiment(args, net)
+    summary = (
+        run_ping(args, net) if args.run_ping else run_experiment(args, net)
+    )
     if args.topology == "single_switch":
         args.nodes_per_router = args.nodes_per_router * args.num_routers
         args.num_routers = 1
@@ -372,7 +454,7 @@ if __name__ == "__main__":
     info("*** Starting network\n")
     net.start()
 
-    if args.run_experiment:
+    if args.run_experiment or args.run_ping:
         try:
             run(args, net)
         except Exception:
