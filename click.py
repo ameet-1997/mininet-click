@@ -116,7 +116,7 @@ class ClickSwitch(Switch):
             out.append(
                 "\n".join(
                     [
-                        "out{} :: Queue(8)".format(idx),
+                        "out{} :: Queue(1024)".format(idx),
                         "-> Print(out{})".format(idx),
                         "-> ToDevice('{}');\n".format(intf),
                     ]
